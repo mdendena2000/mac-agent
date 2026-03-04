@@ -10,7 +10,6 @@ struct MacInfo {
 }
 
 fn get_hostname() -> String {
-    // Tenta via comando do sistema
     #[cfg(target_os = "windows")]
     let output = Command::new("hostname").output();
 
@@ -22,7 +21,6 @@ fn get_hostname() -> String {
             String::from_utf8_lossy(&o.stdout).trim().to_string()
         }
         _ => {
-            // Fallback: lê /etc/hostname no Linux ou variável de ambiente
             #[cfg(not(target_os = "windows"))]
             if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
                 return h.trim().to_string();
@@ -36,41 +34,29 @@ fn get_hostname() -> String {
 
 #[cfg(target_os = "windows")]
 fn get_mac_addresses() -> Vec<MacInfo> {
-    let output = Command::new("getmac")
-        .args(["/fo", "csv", "/v", "/nh"])
-        .output()
-        .unwrap_or_else(|_| std::process::Output {
-            status: std::process::ExitStatus::from(1),
-            stdout: vec![],
-            stderr: vec![],
-        });
-
     let mut macs = Vec::new();
-    let text = String::from_utf8_lossy(&output.stdout);
 
-    // Fallback: usa ipconfig para pegar IPs e MACs
-    let ipconfig = Command::new("powershell")
-        .args(["-Command", r#"
+    let result = Command::new("powershell")
+        .args(["-NoProfile", "-Command", r#"
             Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object {
                 $ip = (Get-NetIPAddress -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress
-                if ($ip) {
-                    Write-Output "$($_.Name)|$($_.MacAddress)|$ip"
-                }
+                Write-Output "$($_.Name)|$($_.MacAddress)|$ip"
             }
         "#])
         .output();
 
-    if let Ok(out) = ipconfig {
+    if let Ok(out) = result {
         let data = String::from_utf8_lossy(&out.stdout);
         for line in data.lines() {
             let parts: Vec<&str> = line.splitn(3, '|').collect();
             if parts.len() == 3 {
                 let mac = parts[1].trim().replace('-', ":").to_lowercase();
-                if mac != "00:00:00:00:00:00" && !mac.is_empty() {
+                let ip = parts[2].trim().to_string();
+                if !mac.is_empty() && mac != "00:00:00:00:00:00" {
                     macs.push(MacInfo {
                         interface: parts[0].trim().to_string(),
                         mac,
-                        ip: parts[2].trim().to_string(),
+                        ip,
                     });
                 }
             }
@@ -84,17 +70,14 @@ fn get_mac_addresses() -> Vec<MacInfo> {
 fn get_mac_addresses() -> Vec<MacInfo> {
     let mut macs = Vec::new();
 
-    // Lê /sys/class/net para cada interface
     if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
         for entry in entries.flatten() {
             let iface = entry.file_name().to_string_lossy().to_string();
 
-            // Pula loopback
             if iface == "lo" {
                 continue;
             }
 
-            // Lê MAC
             let mac_path = format!("/sys/class/net/{}/address", iface);
             let mac = match std::fs::read_to_string(&mac_path) {
                 Ok(m) => m.trim().to_string(),
@@ -105,7 +88,6 @@ fn get_mac_addresses() -> Vec<MacInfo> {
                 continue;
             }
 
-            // Pega IP via ip addr
             let ip_output = Command::new("ip")
                 .args(["addr", "show", &iface])
                 .output();
@@ -155,10 +137,7 @@ fn handle_client(mut stream: TcpStream) {
     let request = String::from_utf8_lossy(&buf);
     let first_line = request.lines().next().unwrap_or("");
     let is_options = first_line.starts_with("OPTIONS");
-    let path = first_line
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or("/");
+    let path = first_line.split_whitespace().nth(1).unwrap_or("/");
 
     let cors = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\n";
 

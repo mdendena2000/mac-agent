@@ -31,11 +31,28 @@ fn main() {
     println!("Desinstalando Agente MAC/Hostname...");
     println!();
 
-    // Parar serviço
+    // Parar serviço e aguardar confirmação
     print!("[...] Parando serviço...");
     let _ = Command::new("sc").args(["stop", "AgenteMac"]).output();
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    println!("\r[OK] Serviço parado        ");
+
+    // Aguarda até o serviço parar de fato (max 10s)
+    let mut stopped = false;
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let out = Command::new("sc").args(["query", "AgenteMac"]).output();
+        if let Ok(o) = out {
+            let text = String::from_utf8_lossy(&o.stdout);
+            if text.contains("STOPPED") {
+                stopped = true;
+                break;
+            }
+        }
+    }
+    if stopped {
+        println!("\r[OK] Serviço parado        ");
+    } else {
+        println!("\r[AVISO] Serviço pode ainda estar rodando");
+    }
 
     // Remover serviço
     print!("[...] Removendo serviço...");
@@ -95,10 +112,30 @@ fn main() {
     println!("============================================");
     println!();
 
-    // Parar serviço
+    // Parar serviço e aguardar confirmação
     print!("[...] Parando serviço...");
     let _ = Command::new("systemctl").args(["stop", "agentemac"]).output();
-    println!("\r[OK] Serviço parado        ");
+
+    // Aguarda até o serviço parar de fato (max 10s)
+    let mut stopped = false;
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let out = Command::new("systemctl")
+            .args(["is-active", "agentemac"])
+            .output();
+        if let Ok(o) = out {
+            let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if text == "inactive" || text == "failed" {
+                stopped = true;
+                break;
+            }
+        }
+    }
+    if stopped {
+        println!("\r[OK] Serviço parado        ");
+    } else {
+        println!("\r[AVISO] Serviço pode ainda estar rodando");
+    }
 
     // Desabilitar do boot
     print!("[...] Desabilitando serviço...");

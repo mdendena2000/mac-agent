@@ -1,0 +1,8 @@
+[package]
+name = "agent"
+version = "1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "agent"
+path = "src/main.rs"

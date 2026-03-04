@@ -10,6 +10,13 @@ struct MacInfo {
 }
 
 fn get_hostname() -> String {
+    // Tenta ler direto do kernel (mais confiável)
+    #[cfg(not(target_os = "windows"))]
+    if let Ok(h) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
+        let h = h.trim().to_string();
+        if !h.is_empty() { return h; }
+    }
+
     #[cfg(target_os = "windows")]
     let output = Command::new("hostname").output();
 
@@ -174,9 +181,50 @@ fn handle_client(mut stream: TcpStream) {
     }
 }
 
+fn kill_previous_instance() {
+    #[cfg(target_os = "windows")]
+    {
+        // Mata qualquer processo usando a porta 6060
+        let _ = Command::new("powershell")
+            .args(["-NoProfile", "-Command",
+                "Get-NetTCPConnection -LocalPort 6060 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+            ])
+            .output();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // fuser -k mata o processo usando a porta
+        let _ = Command::new("fuser")
+            .args(["-k", "6060/tcp"])
+            .output();
+
+        // Fallback: lsof + kill
+        if let Ok(out) = Command::new("lsof")
+            .args(["-ti", "tcp:6060"])
+            .output()
+        {
+            let pids = String::from_utf8_lossy(&out.stdout);
+            for pid in pids.split_whitespace() {
+                let _ = Command::new("kill").args(["-9", pid]).output();
+            }
+        }
+    }
+
+    // Pequena pausa para o SO liberar a porta
+    std::thread::sleep(std::time::Duration::from_millis(300));
+}
+
 fn main() {
     let addr = "127.0.0.1:6060";
-    let listener = TcpListener::bind(addr).expect("Falha ao iniciar o servidor");
+
+    // Tenta bind direto; se falhar, mata instância anterior e tenta de novo
+    let listener = TcpListener::bind(addr).unwrap_or_else(|_| {
+        eprintln!("Porta em uso, encerrando instância anterior...");
+        kill_previous_instance();
+        TcpListener::bind(addr).expect("Falha ao iniciar o servidor após liberar a porta")
+    });
+
     println!("Agente rodando em http://{}/mac", addr);
 
     for stream in listener.incoming() {

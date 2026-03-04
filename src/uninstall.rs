@@ -31,7 +31,7 @@ fn main() {
     println!("Desinstalando Agente MAC/Hostname...");
     println!();
 
-    // Parar serviço e aguardar confirmação
+    // Parar serviço
     print!("[...] Parando serviço...");
     let _ = Command::new("sc").args(["stop", "AgenteMac"]).output();
 
@@ -51,8 +51,16 @@ fn main() {
     if stopped {
         println!("\r[OK] Serviço parado        ");
     } else {
-        println!("\r[AVISO] Serviço pode ainda estar rodando");
+        println!("\r[AVISO] Forçando encerramento na porta 6060...");
     }
+
+    // Garante que nada está na porta 6060
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-Command",
+            "Get-NetTCPConnection -LocalPort 6060 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+        ]).output();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    println!("[OK] Porta 6060 liberada");
 
     // Remover serviço
     print!("[...] Removendo serviço...");
@@ -112,7 +120,7 @@ fn main() {
     println!("============================================");
     println!();
 
-    // Parar serviço e aguardar confirmação
+    // Parar serviço
     print!("[...] Parando serviço...");
     let _ = Command::new("systemctl").args(["stop", "agentemac"]).output();
 
@@ -134,8 +142,18 @@ fn main() {
     if stopped {
         println!("\r[OK] Serviço parado        ");
     } else {
-        println!("\r[AVISO] Serviço pode ainda estar rodando");
+        println!("\r[AVISO] Forçando encerramento na porta 6060...");
     }
+
+    // Garante que nada está na porta 6060
+    let _ = Command::new("fuser").args(["-k", "6060/tcp"]).output();
+    if let Ok(out) = Command::new("lsof").args(["-ti", "tcp:6060"]).output() {
+        for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+            let _ = Command::new("kill").args(["-9", pid]).output();
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    println!("[OK] Porta 6060 liberada");
 
     // Desabilitar do boot
     print!("[...] Desabilitando serviço...");

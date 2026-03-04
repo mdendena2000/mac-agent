@@ -40,7 +40,7 @@ fn get_mac_addresses() -> Vec<MacInfo> {
         .args(["/fo", "csv", "/v", "/nh"])
         .output()
         .unwrap_or_else(|_| std::process::Output {
-            status: std::process::ExitStatus::from_raw(1),
+            status: std::process::ExitStatus::from(1),
             stdout: vec![],
             stderr: vec![],
         });

@@ -333,12 +333,95 @@ fn ensure_service(exe_path: &str) {
 //  MAIN
 // ============================================================
 
+
+// ============================================================
+//  UNINSTALL
+// ============================================================
+
+#[cfg(target_os = "windows")]
+fn self_uninstall() {
+    use std::os::windows::process::CommandExt;
+
+    // Re-executa como Administrador se necessário
+    let exe = std::env::current_exe().unwrap();
+    let is_admin = Command::new("net").args(["session"]).output()
+        .map(|o| o.status.success()).unwrap_or(false);
+
+    if !is_admin {
+        let _ = Command::new("powershell")
+            .args(["-NoProfile", "-Command",
+                &format!("Start-Process -FilePath '{}' -ArgumentList '--uninstall' -Verb RunAs -Wait", exe.display())
+            ])
+            .creation_flags(0x08000000)
+            .status();
+        return;
+    }
+
+    println!("Parando e removendo serviço...");
+    let _ = Command::new("sc").args(["stop", "AgenteMac"]).output();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let _ = Command::new("sc").args(["delete", "AgenteMac"]).output();
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    let install_dir = std::path::Path::new("C:\\AgenteMac");
+    if install_dir.exists() {
+        let _ = std::fs::remove_dir_all(install_dir);
+    }
+
+    println!("Desinstalação concluída!");
+    std::thread::sleep(std::time::Duration::from_secs(3));
+}
+
+#[cfg(not(target_os = "windows"))]
+fn self_uninstall() {
+    // Re-executa com sudo se necessário
+    if unsafe { libc_geteuid() } != 0 {
+        let exe = std::env::current_exe().unwrap();
+        let _ = Command::new("sudo")
+            .args([exe.to_str().unwrap(), "--uninstall"])
+            .status();
+        return;
+    }
+
+    println!("Parando e removendo serviço...");
+    let _ = Command::new("systemctl").args(["stop", "agentemac"]).output();
+    let _ = Command::new("systemctl").args(["disable", "agentemac"]).output();
+    let _ = std::fs::remove_file("/etc/systemd/system/agentemac.service");
+    let _ = Command::new("systemctl").args(["daemon-reload"]).output();
+    let _ = std::fs::remove_dir_all("/opt/agentemac");
+
+    println!("Desinstalação concluída!");
+}
+
+#[cfg(not(target_os = "windows"))]
+fn libc_geteuid() -> u32 {
+    unsafe extern "C" { fn geteuid() -> u32; }
+    unsafe { geteuid() }
+}
+
+fn is_already_installed() -> bool {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+
+    #[cfg(target_os = "windows")]
+    return exe.starts_with("C:\\AgenteMac");
+
+    #[cfg(not(target_os = "windows"))]
+    return exe.starts_with("/opt/agentemac");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // Argumento passado pelo serviço Windows para rodar o servidor direto
     if args.get(1).map(|s| s.as_str()) == Some("--run") {
         run_server();
+        return;
+    }
+
+    if args.get(1).map(|s| s.as_str()) == Some("--uninstall") {
+        self_uninstall();
         return;
     }
 
@@ -350,6 +433,12 @@ fn main() {
         }
     }
 
-    // Primeira execução: instala e registra como serviço
+    // Se já está no diretório de instalação, só roda o servidor
+    if is_already_installed() {
+        run_server();
+        return;
+    }
+
+    // Primeira execução fora do diretório: instala e registra como serviço
     self_install();
 }
